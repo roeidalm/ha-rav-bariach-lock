@@ -269,4 +269,5 @@ class RavBariachAPI:
         return {
             "locked": locked,
             "battery": raw.get("batteryLevel"),
+            "available": raw.get("isAvailable") == 1,
         }
