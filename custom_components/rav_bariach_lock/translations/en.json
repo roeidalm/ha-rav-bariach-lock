@@ -1,0 +1,38 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Rav-Bariach LockApp — Sign In",
+        "description": "Enter your DESI / LockApp account credentials",
+        "data": {
+          "email": "Email address",
+          "password": "Password"
+        }
+      },
+      "pick_lock": {
+        "title": "Choose your lock",
+        "description": "Locks found on your account",
+        "data": {
+          "lock_id": "Smart lock"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate Rav-Bariach Lock",
+        "description": "Your password has changed. Enter the new password.",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot connect to DESI cloud API",
+      "invalid_auth": "Invalid email or password",
+      "no_locks_found": "No smart locks found on this account",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "This lock is already configured",
+      "reauth_successful": "Re-authentication successful"
+    }
+  }
+}
