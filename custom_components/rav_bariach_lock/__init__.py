@@ -68,6 +68,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         device_id=entry.data[CONF_DEVICE_ID],
         user_token=entry.data.get(CONF_USER_TOKEN),
     )
+
+    # Migration: entries created before v1.0.1 don't have userToken stored.
+    # Do a silent full login and persist the token so future startups use refresh only.
+    if not entry.data.get(CONF_USER_TOKEN):
+        _LOGGER.debug("Rav-Bariach: no userToken in config entry, running migration login")
+        session = async_get_clientsession(hass)
+        try:
+            await api.full_login(session)
+            hass.config_entries.async_update_entry(
+                entry,
+                data={**entry.data, CONF_USER_TOKEN: api.user_token},
+            )
+            _LOGGER.debug("Rav-Bariach: migration complete, userToken stored")
+        except RavBariachAuthError:
+            _LOGGER.error("Rav-Bariach: migration login failed — check credentials")
+            return False
+
     coordinator = RavBariachCoordinator(hass, api, entry)
     await coordinator.async_config_entry_first_refresh()
 
