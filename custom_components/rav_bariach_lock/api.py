@@ -169,11 +169,22 @@ class RavBariachAPI:
             raise RavBariachAuthError(f"JWT refresh failed: {err}") from err
 
     async def _ensure_auth(self, session: ClientSession) -> None:
-        """Ensure a valid JWT exists. Refresh if expired. No password fallback."""
+        """Ensure a valid JWT exists.
+
+        Flow:
+          1. JWT still valid → do nothing
+          2. JWT expired → try refresh (no password)
+          3. Refresh fails (userToken rejected/expired) → full login fallback
+          4. Full login fails → raise RavBariachAuthError → triggers HA reauth
+        """
         if self._jwt and not _is_jwt_expired(self._jwt):
             return
         _LOGGER.debug("Rav-Bariach: JWT expired or missing, refreshing via userToken")
-        await self._refresh_jwt(session)
+        try:
+            await self._refresh_jwt(session)
+        except RavBariachAuthError:
+            _LOGGER.warning("Rav-Bariach: userToken rejected, falling back to full login")
+            await self.full_login(session)  # raises RavBariachAuthError if credentials wrong
 
     # ------------------------------------------------------------------
     # Device discovery (used in config flow)

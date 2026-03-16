@@ -52,7 +52,15 @@ class RavBariachCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self) -> dict:
         session = async_get_clientsession(self.hass)
         try:
-            return await self.api.get_status(session)
+            result = await self.api.get_status(session)
+            # If full_login() was triggered inside _ensure_auth, persist the new userToken
+            if self.api.user_token != self.entry.data.get(CONF_USER_TOKEN):
+                _LOGGER.debug("Rav-Bariach: persisting new userToken after re-login")
+                self.hass.config_entries.async_update_entry(
+                    self.entry,
+                    data={**self.entry.data, CONF_USER_TOKEN: self.api.user_token},
+                )
+            return result
         except RavBariachAuthError:
             await self.hass.config_entries.async_initiate_reauth(self.entry)
             raise UpdateFailed("Authentication failed — reauth required")
