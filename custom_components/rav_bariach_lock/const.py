@@ -16,7 +16,8 @@ API_STATUS_ENDPOINT = "v2/smart-lock/rav-bariach-lockapp/get-status"
 CONF_EMAIL = "email"
 CONF_PASSWORD = "password"
 CONF_LOCK_ID = "lock_id"
-CONF_DEVICE_ID = "device_id"   # generated per install, stored in config entry
+CONF_DEVICE_ID = "device_id"
+CONF_USER_TOKEN = "user_token"   # generated per install, stored in config entry
 
 # Timing
 SCAN_INTERVAL_SECONDS = 300       # Poll status every 5 minutes

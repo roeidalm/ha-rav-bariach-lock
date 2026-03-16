@@ -11,7 +11,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import RavBariachAPI, RavBariachAuthError
-from .const import CONF_DEVICE_ID, CONF_EMAIL, CONF_LOCK_ID, CONF_PASSWORD, DOMAIN, SCAN_INTERVAL_SECONDS
+from .const import CONF_DEVICE_ID, CONF_EMAIL, CONF_LOCK_ID, CONF_PASSWORD, CONF_USER_TOKEN, DOMAIN, SCAN_INTERVAL_SECONDS
 
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = [Platform.LOCK, Platform.SENSOR]
@@ -47,6 +47,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         password=entry.data[CONF_PASSWORD],
         lock_id=entry.data[CONF_LOCK_ID],
         device_id=entry.data[CONF_DEVICE_ID],
+        user_token=entry.data.get(CONF_USER_TOKEN),
     )
     coordinator = RavBariachCoordinator(hass, api, entry)
     await coordinator.async_config_entry_first_refresh()

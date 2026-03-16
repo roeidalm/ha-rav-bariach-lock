@@ -53,7 +53,6 @@ def _is_jwt_expired(token: str) -> bool:
 
 
 def _device_info(device_id: str) -> dict:
-    """Build device info payload using a per-install device_id."""
     return {
         "isPhysicalDevice": "true",
         "systemVersion": "15",
@@ -66,35 +65,49 @@ def _device_info(device_id: str) -> dict:
 
 
 class RavBariachAuthError(Exception):
-    """Raised when credentials are invalid (triggers reauth flow)."""
+    """Raised when authentication fails — triggers HA reauth flow."""
 
 
 class RavBariachAPI:
     """Async DESI API client.
 
-    Auth flow:
-      1. Full login (email + password) → JWT + userToken
-      2. JWT refresh (/v4/login/user-token, no password) every ~35 min
-         REQUIRED fields in refresh payload: userToken, application, registrationToken:"", deviceInfo
-         (omitting registrationToken causes random 500 errors)
-      3. If refresh fails → full login fallback
-      4. If full login fails → raise RavBariachAuthError (triggers HA reauth)
+    Auth strategy (post-setup):
+      - userToken is long-lived and stored in HA config entry.
+      - JWT is short-lived (~40 min); refreshed via /v4/login/user-token (no password).
+      - If refresh fails → RavBariachAuthError → HA reauth (user re-enters password).
+      - Full login (email+password) is ONLY used during initial config flow setup.
+
+    IMPORTANT quirks discovered via reverse engineering:
+      - registrationToken:"" is REQUIRED in refresh payload — omitting causes 500 errors.
+      - deviceInfo is REQUIRED in refresh payload — omitting causes 403.
+      - JWT is in the 3rd word of the authorization header (index 2), not index 1.
     """
 
-    def __init__(self, email: str, password: str, lock_id: int, device_id: str) -> None:
+    def __init__(
+        self,
+        email: str,
+        password: str,
+        lock_id: int,
+        device_id: str,
+        user_token: str | None = None,
+    ) -> None:
         self._email = email
         self._password = password
         self._lock_id = lock_id
         self._device_id = device_id
         self._jwt: str | None = None
-        self._user_token: str | None = None
+        self._user_token: str | None = user_token
+
+    @property
+    def user_token(self) -> str | None:
+        return self._user_token
 
     # ------------------------------------------------------------------
-    # Auth
+    # Auth — initial setup only
     # ------------------------------------------------------------------
 
-    async def _full_login(self, session: ClientSession) -> None:
-        """Full login with email + password."""
+    async def full_login(self, session: ClientSession) -> None:
+        """Full login with email + password. Only called during config flow setup."""
         payload = {
             "userLoginText": self._email,
             "password": self._password,
@@ -120,12 +133,16 @@ class RavBariachAPI:
 
         self._jwt = jwt
         self._user_token = user_token
-        _LOGGER.debug("Rav-Bariach: full login successful")
+        _LOGGER.debug("Rav-Bariach: full login successful, userToken obtained")
 
-    async def _refresh_jwt(self, session: ClientSession) -> bool:
-        """Try to refresh JWT using stored userToken (no password needed)."""
+    # ------------------------------------------------------------------
+    # Auth — normal operation (refresh only, no password)
+    # ------------------------------------------------------------------
+
+    async def _refresh_jwt(self, session: ClientSession) -> None:
+        """Refresh JWT using stored userToken. Raises RavBariachAuthError on failure."""
         if not self._user_token:
-            return False
+            raise RavBariachAuthError("No userToken available — reauth required")
         try:
             payload = {
                 "userToken": self._user_token,
@@ -138,35 +155,34 @@ class RavBariachAPI:
                 json=payload,
                 headers=HEADERS_BASE,
             ) as resp:
-                if resp.status != 200:
-                    return False
+                if resp.status in (401, 403):
+                    raise RavBariachAuthError("userToken rejected — reauth required")
+                resp.raise_for_status()
                 jwt = resp.headers.get("authorization", "").replace("Bearer ", "")
                 if not jwt:
-                    return False
+                    raise RavBariachAuthError("Refresh returned no JWT")
                 self._jwt = jwt
-                _LOGGER.debug("Rav-Bariach: JWT refreshed (no password)")
-                return True
+                _LOGGER.debug("Rav-Bariach: JWT refreshed successfully")
+        except RavBariachAuthError:
+            raise
         except Exception as err:
-            _LOGGER.debug("Rav-Bariach: JWT refresh failed: %s", err)
-            return False
+            raise RavBariachAuthError(f"JWT refresh failed: {err}") from err
 
     async def _ensure_auth(self, session: ClientSession) -> None:
+        """Ensure a valid JWT exists. Refresh if expired. No password fallback."""
         if self._jwt and not _is_jwt_expired(self._jwt):
             return
-        _LOGGER.debug("Rav-Bariach: JWT expired, refreshing")
-        if not await self._refresh_jwt(session):
-            _LOGGER.debug("Rav-Bariach: refresh failed, doing full login")
-            await self._full_login(session)
+        _LOGGER.debug("Rav-Bariach: JWT expired or missing, refreshing via userToken")
+        await self._refresh_jwt(session)
 
     # ------------------------------------------------------------------
-    # Device discovery
+    # Device discovery (used in config flow)
     # ------------------------------------------------------------------
 
     async def get_smart_locks(self, session: ClientSession) -> list[dict[str, Any]]:
         """Return list of smart locks on this account.
 
         Each entry: {"id": int, "name": str, "mac": str}
-        Uses /v9/devices/sync with empty devices list.
         """
         await self._ensure_auth(session)
         headers = {**HEADERS_BASE, "authorization": f"Bearer {self._jwt}"}
@@ -225,7 +241,7 @@ class RavBariachAPI:
     # ------------------------------------------------------------------
 
     async def get_status(self, session: ClientSession) -> dict[str, Any]:
-        """Return dict: {locked: bool|None, battery: int|None, available: bool}"""
+        """Return dict: {locked: bool|None, battery: int|None}"""
         await self._ensure_auth(session)
         payload = {
             "userToken": self._user_token,
@@ -253,5 +269,4 @@ class RavBariachAPI:
         return {
             "locked": locked,
             "battery": raw.get("batteryLevel"),
-            "available": raw.get("isAvailable") == 1,
         }

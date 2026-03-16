@@ -11,7 +11,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import SelectOptionDict, SelectSelector, SelectSelectorConfig
 
 from .api import RavBariachAPI, RavBariachAuthError
-from .const import CONF_DEVICE_ID, CONF_EMAIL, CONF_LOCK_ID, CONF_PASSWORD, DOMAIN
+from .const import CONF_DEVICE_ID, CONF_EMAIL, CONF_LOCK_ID, CONF_PASSWORD, CONF_USER_TOKEN, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -62,7 +62,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
             session = async_get_clientsession(self.hass)
             try:
-                await self._api._full_login(session)
+                await self._api.full_login(session)
                 self._discovered_locks = await self._api.get_smart_locks(session)
             except RavBariachAuthError:
                 errors["base"] = "invalid_auth"
@@ -103,6 +103,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_PASSWORD: self._password,
                     CONF_LOCK_ID: lock_id,
                     CONF_DEVICE_ID: self._device_id,
+                    CONF_USER_TOKEN: self._api.user_token,
                 },
             )
 
@@ -152,7 +153,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
             session = async_get_clientsession(self.hass)
             try:
-                await api._full_login(session)
+                await api.full_login(session)
             except RavBariachAuthError:
                 errors["base"] = "invalid_auth"
             except Exception:
@@ -160,7 +161,11 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 self.hass.config_entries.async_update_entry(
                     entry,
-                    data={**entry.data, CONF_PASSWORD: user_input[CONF_PASSWORD]},
+                    data={
+                        **entry.data,
+                        CONF_PASSWORD: user_input[CONF_PASSWORD],
+                        CONF_USER_TOKEN: api.user_token,
+                    },
                 )
                 await self.hass.config_entries.async_reload(entry.entry_id)
                 return self.async_abort(reason="reauth_successful")
