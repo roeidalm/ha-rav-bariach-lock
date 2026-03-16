@@ -8,10 +8,31 @@ from typing import Any
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.selector import SelectOptionDict, SelectSelector, SelectSelectorConfig
+from homeassistant.helpers.selector import (
+    BooleanSelector,
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
+    SelectOptionDict,
+    SelectSelector,
+    SelectSelectorConfig,
+)
 
 from .api import RavBariachAPI, RavBariachAuthError
-from .const import CONF_DEVICE_ID, CONF_EMAIL, CONF_LOCK_ID, CONF_PASSWORD, CONF_USER_TOKEN, DOMAIN
+from .const import (
+    CONF_DEVICE_ID,
+    CONF_EMAIL,
+    CONF_LOCK_ID,
+    CONF_PASSWORD,
+    CONF_POLL_INTERVAL,
+    CONF_POLLING_ENABLED,
+    CONF_USER_TOKEN,
+    DOMAIN,
+    POLL_INTERVAL_DEFAULT,
+    POLL_INTERVAL_MAX,
+    POLL_INTERVAL_MIN,
+    POLL_INTERVAL_STEP,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -174,4 +195,42 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="reauth_confirm",
             data_schema=STEP_REAUTH_SCHEMA,
             errors=errors,
+        )
+
+    @staticmethod
+    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> config_entries.OptionsFlow:
+        return OptionsFlowHandler(config_entry)
+
+
+class OptionsFlowHandler(config_entries.OptionsFlow):
+    """Options flow: polling toggle + interval slider."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        self._config_entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        current_enabled = self._config_entry.options.get(CONF_POLLING_ENABLED, True)
+        current_interval = self._config_entry.options.get(CONF_POLL_INTERVAL, POLL_INTERVAL_DEFAULT)
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_POLLING_ENABLED, default=current_enabled): BooleanSelector(),
+                    vol.Required(CONF_POLL_INTERVAL, default=float(current_interval)): NumberSelector(
+                        NumberSelectorConfig(
+                            min=POLL_INTERVAL_MIN,
+                            max=POLL_INTERVAL_MAX,
+                            step=POLL_INTERVAL_STEP,
+                            unit_of_measurement="min",
+                            mode=NumberSelectorMode.SLIDER,
+                        )
+                    ),
+                }
+            ),
         )

@@ -1,4 +1,19 @@
 {
+  "options": {
+    "step": {
+      "init": {
+        "title": "Rav-Bariach — Polling Settings",
+        "data": {
+          "polling_enabled": "Enable status polling",
+          "poll_interval": "Polling interval (minutes)"
+        },
+        "data_description": {
+          "polling_enabled": "When disabled, the lock state is only updated after a lock/unlock command.",
+          "poll_interval": "How often to check the lock state (5–60 minutes)."
+        }
+      }
+    }
+  },
   "config": {
     "step": {
       "user": {

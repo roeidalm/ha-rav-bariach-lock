@@ -19,8 +19,17 @@ CONF_LOCK_ID = "lock_id"
 CONF_DEVICE_ID = "device_id"
 CONF_USER_TOKEN = "user_token"   # generated per install, stored in config entry
 
-# Timing
-SCAN_INTERVAL_SECONDS = 300       # Poll status every 5 minutes
+# Options keys
+CONF_POLLING_ENABLED = "polling_enabled"
+CONF_POLL_INTERVAL = "poll_interval"      # minutes
+
+# Polling defaults
+POLL_INTERVAL_DEFAULT = 5      # minutes
+POLL_INTERVAL_MIN = 5
+POLL_INTERVAL_MAX = 60
+POLL_INTERVAL_STEP = 5
+
+# JWT
 JWT_EXPIRY_BUFFER_SECONDS = 300   # Re-auth 5 min before JWT expiry
 
 # Lock state values (from API)

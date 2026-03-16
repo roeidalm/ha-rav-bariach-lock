@@ -11,21 +11,40 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import RavBariachAPI, RavBariachAuthError
-from .const import CONF_DEVICE_ID, CONF_EMAIL, CONF_LOCK_ID, CONF_PASSWORD, CONF_USER_TOKEN, DOMAIN, SCAN_INTERVAL_SECONDS
+from .const import (
+    CONF_DEVICE_ID,
+    CONF_EMAIL,
+    CONF_LOCK_ID,
+    CONF_PASSWORD,
+    CONF_POLL_INTERVAL,
+    CONF_POLLING_ENABLED,
+    CONF_USER_TOKEN,
+    DOMAIN,
+    POLL_INTERVAL_DEFAULT,
+)
 
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = [Platform.LOCK, Platform.SENSOR]
 
 
+def _get_update_interval(entry: ConfigEntry) -> timedelta | None:
+    """Return polling interval from options, or None if polling is disabled."""
+    enabled = entry.options.get(CONF_POLLING_ENABLED, True)
+    if not enabled:
+        return None
+    minutes = entry.options.get(CONF_POLL_INTERVAL, POLL_INTERVAL_DEFAULT)
+    return timedelta(minutes=int(minutes))
+
+
 class RavBariachCoordinator(DataUpdateCoordinator):
-    """Coordinator that fetches lock status on a schedule."""
+    """Coordinator that fetches lock status on a configurable schedule."""
 
     def __init__(self, hass: HomeAssistant, api: RavBariachAPI, entry: ConfigEntry) -> None:
         super().__init__(
             hass,
             _LOGGER,
             name=DOMAIN,
-            update_interval=timedelta(seconds=SCAN_INTERVAL_SECONDS),
+            update_interval=_get_update_interval(entry),
         )
         self.api = api
         self.entry = entry
@@ -54,7 +73,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Reload when options change (polling toggle / interval)
+    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
     return True
+
+
+async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload the integration when options are changed."""
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
