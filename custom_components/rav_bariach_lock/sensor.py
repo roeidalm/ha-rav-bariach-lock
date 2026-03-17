@@ -22,7 +22,7 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    coordinator: RavBariachCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator: RavBariachCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     async_add_entities([RavBariachBatterySensor(coordinator, entry)])
 
 
