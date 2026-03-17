@@ -1,7 +1,7 @@
 {
   "domain": "rav_bariach_lock",
   "name": "Rav-Bariach LockApp",
-  "version": "1.1.3",
+  "version": "1.1.4",
   "config_flow": true,
   "documentation": "https://github.com/roeidalm/ha-rav-bariach-lock",
   "requirements": ["aiohttp", "firebase-messaging>=0.4.5"],

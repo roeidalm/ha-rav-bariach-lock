@@ -202,8 +202,24 @@ class RavBariachFcmClient:
         else:
             _LOGGER.warning("Rav-Bariach FCM: checkin_or_register returned no token")
 
-        # Block until disconnected
+        # start() creates background asyncio tasks (_listen + _do_monitor)
+        # and returns immediately. We must await those tasks to block until
+        # the listener actually stops (either cleanly or due to errors).
         await self._push_client.start()
+
+        # Wait for the library's internal tasks to finish.
+        tasks = getattr(self._push_client, "tasks", None)
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        # If the library terminated itself (abort_on_sequential_error_count
+        # or connection retries exhausted), do_listen will be False.
+        # Raise so our reconnect loop can count this as a failure.
+        if not getattr(self._push_client, "do_listen", True):
+            raise RuntimeError(
+                "FCM library terminated — connection retries exhausted "
+                "or sequential errors exceeded threshold"
+            )
 
     # ------------------------------------------------------------------
     # Internal — FCM callbacks
