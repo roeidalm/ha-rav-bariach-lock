@@ -175,15 +175,18 @@ class RavBariachFcmClient:
         # Load saved credentials (avoids re-registration on every HA restart)
         saved_credentials = self._entry.data.get(CONF_FCM_CREDENTIALS)
 
+        # firebase-messaging API:
+        #   FcmPushClient(callback, fcm_config, credentials, credentials_updated_callback, ...)
         self._push_client = FcmPushClient(
+            self._handle_notification,
+            fcm_config,
             credentials=saved_credentials,
             credentials_updated_callback=self._handle_credentials_updated,
             received_persistent_ids=[],
-            listen_for_notification=self._handle_notification,
         )
 
         # Register (or re-use saved creds) → get FCM token
-        fcm_token = await self._push_client.checkin_or_register(fcm_config)
+        fcm_token = await self._push_client.checkin_or_register()
 
         if fcm_token:
             _LOGGER.debug(
@@ -207,18 +210,24 @@ class RavBariachFcmClient:
     # ------------------------------------------------------------------
 
     def _handle_notification(
-        self, obj: Any, notification: Any, data_message: Any
+        self, notification: dict, persistent_id: str, obj: Any | None
     ) -> None:
-        """Handle incoming FCM push — called by the firebase_messaging library."""
+        """Handle incoming FCM push — called by the firebase_messaging library.
+
+        Args:
+            notification: dict with the FCM message data
+            persistent_id: unique message ID from FCM
+            obj: optional raw object (usually None)
+        """
         # Log everything on first few messages to understand DESI's payload format
         _LOGGER.debug(
-            "Rav-Bariach FCM raw push — obj=%s | notification=%s | data=%s",
-            obj,
+            "Rav-Bariach FCM raw push — notification=%s | persistent_id=%s | obj=%s",
             notification,
-            data_message,
+            persistent_id,
+            obj,
         )
 
-        event_type = self._extract_event_type(notification, data_message)
+        event_type = self._extract_event_type(notification, obj)
 
         if event_type is None:
             _LOGGER.debug(
