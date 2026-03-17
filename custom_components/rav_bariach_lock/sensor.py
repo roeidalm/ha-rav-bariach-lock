@@ -32,6 +32,7 @@ async def async_setup_entry(
     coordinator: RavBariachCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     async_add_entities([
         RavBariachBatterySensor(coordinator, entry),
+        RavBariachLockStateSensor(coordinator, entry),
         RavBariachLastActionSensor(coordinator, entry),
         RavBariachConnectionSensor(coordinator, entry),
     ])
@@ -59,6 +60,49 @@ class RavBariachBatterySensor(CoordinatorEntity[RavBariachCoordinator], SensorEn
         if self.coordinator.data is None:
             return None
         return self.coordinator.data.get("battery")
+
+    @property
+    def available(self) -> bool:
+        return (
+            self.coordinator.last_update_success
+            and self.coordinator.data is not None
+        )
+
+
+class RavBariachLockStateSensor(CoordinatorEntity[RavBariachCoordinator], SensorEntity):
+    """Sensor showing the current lock state: Locked or Unlocked.
+
+    Updated on every coordinator refresh (polling or manual).
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Lock State"
+    _attr_icon = "mdi:lock-question"
+
+    def __init__(
+        self, coordinator: RavBariachCoordinator, entry: ConfigEntry
+    ) -> None:
+        super().__init__(coordinator)
+        lock_id = entry.data[CONF_LOCK_ID]
+        self._attr_unique_id = f"rav_bariach_{lock_id}_lock_state"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, str(lock_id))},
+        )
+
+    @property
+    def native_value(self) -> str | None:
+        if self.coordinator.data is None:
+            return None
+        locked = self.coordinator.data.get("locked")
+        if locked is None:
+            return None
+        return "Locked" if locked else "Unlocked"
+
+    @property
+    def icon(self) -> str:
+        if self.coordinator.data and self.coordinator.data.get("locked"):
+            return "mdi:lock"
+        return "mdi:lock-open"
 
     @property
     def available(self) -> bool:
