@@ -88,7 +88,7 @@ class RavBariachCoordinator(DataUpdateCoordinator):
             # FCM was suppressing polling; re-enable with default interval
             minutes = self.entry.options.get(CONF_POLL_INTERVAL, POLL_INTERVAL_DEFAULT)
             self.update_interval = timedelta(minutes=int(minutes))
-            self.async_request_refresh()
+            self.hass.async_create_task(self.async_request_refresh())
 
     def set_fcm_active(self, active: bool) -> None:
         """Track whether FCM is providing real-time updates.

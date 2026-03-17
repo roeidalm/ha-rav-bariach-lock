@@ -176,7 +176,7 @@ class RavBariachFcmClient:
         saved_credentials = self._entry.data.get(CONF_FCM_CREDENTIALS)
 
         self._push_client = FcmPushClient(
-            credential=saved_credentials,
+            credentials=saved_credentials,
             credentials_updated_callback=self._handle_credentials_updated,
             received_persistent_ids=[],
             listen_for_notification=self._handle_notification,
