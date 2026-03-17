@@ -90,7 +90,6 @@ class RavBariachAPI:
         lock_id: int,
         device_id: str,
         user_token: str | None = None,
-        fcm_token: str = "",
     ) -> None:
         self._email = email
         self._password = password
@@ -98,24 +97,10 @@ class RavBariachAPI:
         self._device_id = device_id
         self._jwt: str | None = None
         self._user_token: str | None = user_token
-        self._fcm_token: str = fcm_token
 
     @property
     def user_token(self) -> str | None:
         return self._user_token
-
-    # ------------------------------------------------------------------
-    # Auth — initial setup only
-    # ------------------------------------------------------------------
-
-    def set_fcm_token(self, token: str) -> None:
-        """Set the FCM registration token. Called by FcmClient after registration.
-
-        This token is included in all login/refresh payloads so DESI knows
-        which Firebase device to send push notifications to.
-        """
-        self._fcm_token = token
-        _LOGGER.debug("Rav-Bariach: FCM token updated (%s...)", token[:12] if token else "")
 
     async def full_login(self, session: ClientSession) -> None:
         """Full login with email + password. Only called during config flow setup."""
@@ -124,7 +109,7 @@ class RavBariachAPI:
             "password": self._password,
             "userToken": "",
             "application": 4,
-            "registrationToken": self._fcm_token,
+            "registrationToken": "",
             "deviceInfo": _device_info(self._device_id),
         }
         async with session.post(
@@ -158,7 +143,7 @@ class RavBariachAPI:
             payload = {
                 "userToken": self._user_token,
                 "application": 4,
-                "registrationToken": self._fcm_token,   # "" until FCM registers
+                "registrationToken": "",
                 "deviceInfo": _device_info(self._device_id),
             }
             async with session.post(

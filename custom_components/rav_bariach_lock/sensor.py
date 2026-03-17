@@ -136,13 +136,12 @@ class RavBariachLastActionSensor(SensorEntity, RestoreEntity):
         return True  # always available — shows last known action even when hub is offline
 
 
-class RavBariachConnectionSensor(SensorEntity):
-    """Sensor showing the current update mode: FCM push or REST polling.
+class RavBariachConnectionSensor(CoordinatorEntity[RavBariachCoordinator], SensorEntity):
+    """Sensor showing whether REST polling is active or disabled.
 
     State:
-      "Push (FCM)"        — real-time FCM is active, polling is off
-      "Polling"           — REST polling is active (manual or FCM fallback)
-      "Initializing"      — just started, FCM not yet connected
+      "Polling"  — REST polling is active
+      "Off"      — polling is disabled (manual toggle)
     """
 
     _attr_has_entity_name = True
@@ -152,33 +151,19 @@ class RavBariachConnectionSensor(SensorEntity):
     def __init__(
         self, coordinator: RavBariachCoordinator, entry: ConfigEntry
     ) -> None:
+        super().__init__(coordinator)
         lock_id = entry.data[CONF_LOCK_ID]
         self._attr_unique_id = f"rav_bariach_{lock_id}_connection_mode"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, str(lock_id))},
         )
-        self._coordinator = coordinator
-        self._unsubscribe = None
-
-    async def async_added_to_hass(self) -> None:
-        """Subscribe to connection mode changes."""
-        self._unsubscribe = self._coordinator.async_add_connection_change_listener(
-            self.async_write_ha_state
-        )
-
-    async def async_will_remove_from_hass(self) -> None:
-        if self._unsubscribe:
-            self._unsubscribe()
-            self._unsubscribe = None
 
     @property
     def native_value(self) -> str:
-        if self._coordinator.fcm_active:
-            return "Push (FCM)"
-        if self._coordinator.update_interval is not None:
+        if self.coordinator.polling_active:
             return "Polling"
-        return "Initializing"
+        return "Off"
 
     @property
     def available(self) -> bool:
-        return True  # always available — reflects internal mode, not hub connectivity
+        return True

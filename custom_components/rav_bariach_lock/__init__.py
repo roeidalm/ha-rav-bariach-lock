@@ -15,7 +15,6 @@ from .api import RavBariachAPI, RavBariachAuthError
 from .const import (
     CONF_DEVICE_ID,
     CONF_EMAIL,
-    CONF_FCM_TOKEN,
     CONF_LOCK_ID,
     CONF_PASSWORD,
     CONF_POLL_INTERVAL,
@@ -24,7 +23,6 @@ from .const import (
     DOMAIN,
     POLL_INTERVAL_DEFAULT,
 )
-from .fcm_client import RavBariachFcmClient
 
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = [
@@ -48,12 +46,7 @@ def _get_update_interval(entry: ConfigEntry) -> timedelta | None:
 
 
 class RavBariachCoordinator(DataUpdateCoordinator):
-    """Coordinator that fetches lock status on a configurable schedule.
-
-    Also receives real-time FCM push events via handle_fcm_event().
-    When FCM is active, polling is disabled and state updates come from push.
-    When FCM fails, polling is re-enabled as a fallback.
-    """
+    """Coordinator that fetches lock status via REST polling on a configurable schedule."""
 
     def __init__(self, hass: HomeAssistant, api: RavBariachAPI, entry: ConfigEntry) -> None:
         super().__init__(
@@ -64,13 +57,10 @@ class RavBariachCoordinator(DataUpdateCoordinator):
         )
         self.api = api
         self.entry = entry
-        self._fcm_active = False
         # last_action: dict with keys locked, event_type, source, timestamp — or None
         self._last_action: dict | None = None
-        # listeners notified on every lock state change (from FCM or poll)
+        # listeners notified on every lock state change (from poll)
         self._lock_change_listeners: list[Callable] = []
-        # listeners notified when FCM/polling connection mode changes
-        self._connection_change_listeners: list[Callable] = []
 
     # ------------------------------------------------------------------
     # Listener registration
@@ -87,17 +77,6 @@ class RavBariachCoordinator(DataUpdateCoordinator):
             self._lock_change_listeners.remove(listener)
         return _remove
 
-    def async_add_connection_change_listener(self, listener: Callable) -> Callable:
-        """Register a callback for FCM/polling connection mode changes.
-
-        listener() -> None
-        Returns an unsubscribe callable.
-        """
-        self._connection_change_listeners.append(listener)
-        def _remove() -> None:
-            self._connection_change_listeners.remove(listener)
-        return _remove
-
     def _fire_lock_changed(self, locked: bool, event_type: str, source: str) -> None:
         """Record last action and notify all lock change listeners."""
         self._last_action = {
@@ -112,74 +91,15 @@ class RavBariachCoordinator(DataUpdateCoordinator):
             except Exception:
                 _LOGGER.exception("Rav-Bariach: error in lock change listener")
 
-    def _fire_connection_changed(self) -> None:
-        """Notify all connection mode listeners."""
-        for listener in list(self._connection_change_listeners):
-            try:
-                listener()
-            except Exception:
-                _LOGGER.exception("Rav-Bariach: error in connection change listener")
-
     @property
     def last_action(self) -> dict | None:
         """Last recorded lock/unlock action with metadata."""
         return self._last_action
 
-    # ------------------------------------------------------------------
-    # FCM integration
-    # ------------------------------------------------------------------
-
-    def handle_fcm_event(self, locked: bool, event_type: str = "") -> None:
-        """Handle a real-time FCM push event — update state without API call.
-
-        Called by RavBariachFcmClient when NGP_LOCK_EVENT / NGP_UNLOCK_EVENT arrives.
-        Uses async_set_updated_data() to push new state to all entities immediately.
-        """
-        _LOGGER.info(
-            "Rav-Bariach FCM: lock state update → %s (event: %s)",
-            "locked" if locked else "unlocked",
-            event_type,
-        )
-        current = self.data or {}
-        old_locked = current.get("locked")
-        self.async_set_updated_data({
-            **current,
-            "locked": locked,
-            "available": True,
-        })
-        if old_locked != locked:
-            self._fire_lock_changed(locked, event_type, "fcm")
-
-    def enable_polling_fallback(self) -> None:
-        """Re-enable polling when FCM fails repeatedly."""
-        _LOGGER.warning(
-            "Rav-Bariach: FCM unavailable — switching to REST polling fallback"
-        )
-        self._fcm_active = False
-        if self.update_interval is None:
-            # FCM was suppressing polling; re-enable with default interval
-            minutes = self.entry.options.get(CONF_POLL_INTERVAL, POLL_INTERVAL_DEFAULT)
-            self.update_interval = timedelta(minutes=int(minutes))
-            self.hass.async_create_task(self.async_request_refresh())
-        self._fire_connection_changed()
-
-    def set_fcm_active(self, active: bool) -> None:
-        """Track whether FCM is providing real-time updates.
-
-        When active=True, REST polling is disabled — FCM is the sole state source.
-        When active=False, polling is NOT re-enabled here; use enable_polling_fallback().
-        """
-        self._fcm_active = active
-        if active:
-            _LOGGER.info(
-                "Rav-Bariach: FCM connected — disabling REST polling (push-only mode)"
-            )
-            self.update_interval = None
-        self._fire_connection_changed()
-
     @property
-    def fcm_active(self) -> bool:
-        return self._fcm_active
+    def polling_active(self) -> bool:
+        """Whether polling is currently enabled."""
+        return self.update_interval is not None
 
     # ------------------------------------------------------------------
     # REST polling (used when FCM is off, or as fallback)
@@ -217,11 +137,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
       1. Create API client with stored credentials
       2. Migration: if no userToken stored → silent full login
       3. Create coordinator and do first REST fetch (establishes baseline state)
-      4. Start FCM client in background (non-blocking)
-         - FCM registers with Firebase → gets token → notifies DESI
-         - Once connected, coordinator switches to push-only mode
-         - If FCM fails → coordinator falls back to polling
-      5. Register platform entities
+      4. Register platform entities
     """
     api = RavBariachAPI(
         email=entry.data[CONF_EMAIL],
@@ -229,7 +145,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         lock_id=entry.data[CONF_LOCK_ID],
         device_id=entry.data[CONF_DEVICE_ID],
         user_token=entry.data.get(CONF_USER_TOKEN),
-        fcm_token=entry.data.get(CONF_FCM_TOKEN, ""),
     )
 
     # Migration: entries created before v1.0.1 don't have userToken stored.
@@ -250,45 +165,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = RavBariachCoordinator(hass, api, entry)
     await coordinator.async_config_entry_first_refresh()
 
-    # ------------------------------------------------------------------
-    # FCM client — start in background, non-blocking
-    # ------------------------------------------------------------------
-    def _on_fcm_token_updated(token: str) -> None:
-        """FCM token received/refreshed → tell DESI about it."""
-        api.set_fcm_token(token)
-        _LOGGER.debug("Rav-Bariach: FCM token updated, DESI will receive it on next API call")
-
-    def _on_lock_event(locked: bool, event_type: str = "") -> None:
-        """FCM push received → update entity state immediately."""
-        coordinator.handle_fcm_event(locked, event_type)
-
-    def _on_fcm_failed() -> None:
-        """FCM failed too many times → fall back to polling."""
-        coordinator.enable_polling_fallback()
-
-    def _on_fcm_connected() -> None:
-        """FCM registered and listening — disable REST polling (FCM is now primary)."""
-        coordinator.set_fcm_active(True)
-
-    fcm_client = RavBariachFcmClient(
-        hass=hass,
-        entry=entry,
-        on_lock_event=_on_lock_event,
-        on_fcm_failed=_on_fcm_failed,
-        on_token_updated=_on_fcm_token_updated,
-        on_fcm_connected=_on_fcm_connected,
-    )
-
-    # Store coordinator + FCM client (no dead intermediate assignment)
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "coordinator": coordinator,
-        "fcm_client": fcm_client,
     }
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
-    # Start FCM listener after platforms are set up (non-blocking)
-    await fcm_client.start()
 
     return True
 
@@ -296,8 +177,5 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
-        entry_data = hass.data[DOMAIN].pop(entry.entry_id)
-        fcm_client: RavBariachFcmClient = entry_data.get("fcm_client")
-        if fcm_client:
-            await fcm_client.stop()
+        hass.data[DOMAIN].pop(entry.entry_id)
     return unload_ok
