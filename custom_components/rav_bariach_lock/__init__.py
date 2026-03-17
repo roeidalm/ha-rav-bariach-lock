@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
+from typing import Callable
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
@@ -26,7 +27,15 @@ from .const import (
 from .fcm_client import RavBariachFcmClient
 
 _LOGGER = logging.getLogger(__name__)
-PLATFORMS = [Platform.LOCK, Platform.SENSOR, Platform.SWITCH, Platform.NUMBER]
+PLATFORMS = [
+    Platform.LOCK,
+    Platform.SENSOR,
+    Platform.SWITCH,
+    Platform.NUMBER,
+    Platform.EVENT,
+    Platform.BUTTON,
+    Platform.BINARY_SENSOR,
+]
 
 
 def _get_update_interval(entry: ConfigEntry) -> timedelta | None:
@@ -56,27 +65,90 @@ class RavBariachCoordinator(DataUpdateCoordinator):
         self.api = api
         self.entry = entry
         self._fcm_active = False
+        # last_action: dict with keys locked, event_type, source, timestamp — or None
+        self._last_action: dict | None = None
+        # listeners notified on every lock state change (from FCM or poll)
+        self._lock_change_listeners: list[Callable] = []
+        # listeners notified when FCM/polling connection mode changes
+        self._connection_change_listeners: list[Callable] = []
+
+    # ------------------------------------------------------------------
+    # Listener registration
+    # ------------------------------------------------------------------
+
+    def async_add_lock_change_listener(self, listener: Callable) -> Callable:
+        """Register a callback for lock state changes (locked/unlocked).
+
+        listener(locked: bool, event_type: str, source: str) -> None
+        Returns an unsubscribe callable.
+        """
+        self._lock_change_listeners.append(listener)
+        def _remove() -> None:
+            self._lock_change_listeners.remove(listener)
+        return _remove
+
+    def async_add_connection_change_listener(self, listener: Callable) -> Callable:
+        """Register a callback for FCM/polling connection mode changes.
+
+        listener() -> None
+        Returns an unsubscribe callable.
+        """
+        self._connection_change_listeners.append(listener)
+        def _remove() -> None:
+            self._connection_change_listeners.remove(listener)
+        return _remove
+
+    def _fire_lock_changed(self, locked: bool, event_type: str, source: str) -> None:
+        """Record last action and notify all lock change listeners."""
+        self._last_action = {
+            "locked": locked,
+            "event_type": event_type,
+            "source": source,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        for listener in list(self._lock_change_listeners):
+            try:
+                listener(locked, event_type, source)
+            except Exception:
+                _LOGGER.exception("Rav-Bariach: error in lock change listener")
+
+    def _fire_connection_changed(self) -> None:
+        """Notify all connection mode listeners."""
+        for listener in list(self._connection_change_listeners):
+            try:
+                listener()
+            except Exception:
+                _LOGGER.exception("Rav-Bariach: error in connection change listener")
+
+    @property
+    def last_action(self) -> dict | None:
+        """Last recorded lock/unlock action with metadata."""
+        return self._last_action
 
     # ------------------------------------------------------------------
     # FCM integration
     # ------------------------------------------------------------------
 
-    def handle_fcm_event(self, locked: bool) -> None:
+    def handle_fcm_event(self, locked: bool, event_type: str = "") -> None:
         """Handle a real-time FCM push event — update state without API call.
 
         Called by RavBariachFcmClient when NGP_LOCK_EVENT / NGP_UNLOCK_EVENT arrives.
         Uses async_set_updated_data() to push new state to all entities immediately.
         """
         _LOGGER.info(
-            "Rav-Bariach FCM: lock state update → %s",
+            "Rav-Bariach FCM: lock state update → %s (event: %s)",
             "locked" if locked else "unlocked",
+            event_type,
         )
         current = self.data or {}
+        old_locked = current.get("locked")
         self.async_set_updated_data({
             **current,
             "locked": locked,
             "available": True,
         })
+        if old_locked != locked:
+            self._fire_lock_changed(locked, event_type, "fcm")
 
     def enable_polling_fallback(self) -> None:
         """Re-enable polling when FCM fails repeatedly."""
@@ -89,6 +161,7 @@ class RavBariachCoordinator(DataUpdateCoordinator):
             minutes = self.entry.options.get(CONF_POLL_INTERVAL, POLL_INTERVAL_DEFAULT)
             self.update_interval = timedelta(minutes=int(minutes))
             self.hass.async_create_task(self.async_request_refresh())
+        self._fire_connection_changed()
 
     def set_fcm_active(self, active: bool) -> None:
         """Track whether FCM is providing real-time updates.
@@ -102,6 +175,7 @@ class RavBariachCoordinator(DataUpdateCoordinator):
                 "Rav-Bariach: FCM connected — disabling REST polling (push-only mode)"
             )
             self.update_interval = None
+        self._fire_connection_changed()
 
     @property
     def fcm_active(self) -> bool:
@@ -113,6 +187,7 @@ class RavBariachCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self) -> dict:
         session = async_get_clientsession(self.hass)
+        old_locked = (self.data or {}).get("locked")
         try:
             result = await self.api.get_status(session)
             # Persist new userToken if full_login() was silently triggered
@@ -122,6 +197,11 @@ class RavBariachCoordinator(DataUpdateCoordinator):
                     self.entry,
                     data={**self.entry.data, CONF_USER_TOKEN: self.api.user_token},
                 )
+            # Detect state change — fire lock change listeners
+            new_locked = result.get("locked")
+            if old_locked is not None and new_locked != old_locked:
+                event_type = "NGP_LOCK_EVENT" if new_locked else "NGP_UNLOCK_EVENT"
+                self._fire_lock_changed(new_locked, event_type, "poll")
             return result
         except RavBariachAuthError:
             await self.hass.config_entries.async_initiate_reauth(self.entry)
@@ -178,9 +258,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         api.set_fcm_token(token)
         _LOGGER.debug("Rav-Bariach: FCM token updated, DESI will receive it on next API call")
 
-    def _on_lock_event(locked: bool) -> None:
+    def _on_lock_event(locked: bool, event_type: str = "") -> None:
         """FCM push received → update entity state immediately."""
-        coordinator.handle_fcm_event(locked)
+        coordinator.handle_fcm_event(locked, event_type)
 
     def _on_fcm_failed() -> None:
         """FCM failed too many times → fall back to polling."""

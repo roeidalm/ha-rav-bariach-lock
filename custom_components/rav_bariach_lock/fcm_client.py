@@ -244,9 +244,9 @@ class RavBariachFcmClient:
         if event_type in FCM_LOCK_EVENTS:
             # firebase-messaging may call this from a non-asyncio thread.
             # Use call_soon_threadsafe to safely hand off to the HA event loop.
-            self._hass.loop.call_soon_threadsafe(self._on_lock_event, True)
+            self._hass.loop.call_soon_threadsafe(self._on_lock_event, True, event_type)
         elif event_type in FCM_UNLOCK_EVENTS:
-            self._hass.loop.call_soon_threadsafe(self._on_lock_event, False)
+            self._hass.loop.call_soon_threadsafe(self._on_lock_event, False, event_type)
         elif event_type in FCM_ALL_LOCK_EVENTS:
             # Failed events (NGP_FAIL_LOCK_EVENT etc.) — log only, state unchanged
             _LOGGER.info(
