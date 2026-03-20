@@ -110,13 +110,6 @@ class RavBariachCoordinator(DataUpdateCoordinator):
         old_locked = (self.data or {}).get("locked")
         try:
             result = await self.api.get_status(session)
-            # Persist new userToken if full_login() was silently triggered
-            if self.api.user_token != self.entry.data.get(CONF_USER_TOKEN):
-                _LOGGER.debug("Rav-Bariach: persisting new userToken after re-login")
-                self.hass.config_entries.async_update_entry(
-                    self.entry,
-                    data={**self.entry.data, CONF_USER_TOKEN: self.api.user_token},
-                )
             # Detect state change — fire lock change listeners
             new_locked = result.get("locked")
             if old_locked is not None and new_locked != old_locked:
@@ -128,6 +121,18 @@ class RavBariachCoordinator(DataUpdateCoordinator):
             raise UpdateFailed("Authentication failed — reauth required")
         except Exception as err:
             raise UpdateFailed(f"Error fetching lock status: {err}") from err
+        finally:
+            # Always persist new userToken immediately after any full_login() fallback,
+            # even if get_status() subsequently raised an exception.
+            # Bug fix: previously token was only saved on success — if get_status failed
+            # after a silent re-login, the new token was discarded and the next poll
+            # would retry with the expired token, causing indefinite auth failures.
+            if self.api.user_token and self.api.user_token != self.entry.data.get(CONF_USER_TOKEN):
+                _LOGGER.debug("Rav-Bariach: persisting new userToken after re-login")
+                self.hass.config_entries.async_update_entry(
+                    self.entry,
+                    data={**self.entry.data, CONF_USER_TOKEN: self.api.user_token},
+                )
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

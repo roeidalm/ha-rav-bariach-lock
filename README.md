@@ -57,6 +57,8 @@ All entities appear on the device page. Changes to the polling switch and interv
 
 JWT lifetime is ~40 minutes. The component refreshes it automatically before it expires. The `userToken` is long-lived and persisted across HA restarts.
 
+> **v1.2.2 fix:** If the `userToken` ever expires, the component performs a silent full re-login and immediately persists the new token — preventing repeated auth failures on subsequent polls.
+
 ## Polling vs. Real-Time
 
 This integration uses **cloud polling** (REST API). The lock state is updated:
