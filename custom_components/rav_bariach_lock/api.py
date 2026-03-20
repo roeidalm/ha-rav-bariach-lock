@@ -260,6 +260,40 @@ class RavBariachAPI:
             json=payload,
             headers=headers,
         ) as resp:
+            if resp.status in (401, 403):
+                # Token rejected by server — force a full re-login and retry once.
+                # This handles the case where userToken was invalidated externally
+                # (e.g. another login session was opened from a different client).
+                _LOGGER.warning(
+                    "Rav-Bariach: get_status returned %s — token invalidated, forcing re-login",
+                    resp.status,
+                )
+                await self.full_login(session)
+                headers = {**HEADERS_BASE, "authorization": f"Bearer {self._jwt}"}
+                payload["userToken"] = self._user_token
+            else:
+                resp.raise_for_status()
+                result = await resp.json()
+                if result.get("status") != "success":
+                    raise ValueError(f"Status fetch failed: {result}")
+                raw = result.get("data", {})
+                raw_status = raw.get("status")
+                try:
+                    locked = int(raw_status) == 1
+                except (TypeError, ValueError):
+                    locked = None
+                return {
+                    "locked": locked,
+                    "battery": raw.get("batteryLevel"),
+                    "available": raw.get("isAvailable") == 1,
+                }
+
+        # Retry after re-login
+        async with session.post(
+            f"{API_BASE_URL}{API_STATUS_ENDPOINT}",
+            json=payload,
+            headers=headers,
+        ) as resp:
             resp.raise_for_status()
             result = await resp.json()
 
